@@ -210,7 +210,7 @@ export default class ServerGenerator extends FunctionGenerator {
           .join(", ");
 
         this.appendString(
-          `        if (message.funcName === "${func.name}" && message.type === "call") {`
+          `        if (message.funcName === "${func.name}") {`
         );
         this.appendString(
           `          const { ${parameters} } = message.parameters;`
@@ -223,14 +223,14 @@ export default class ServerGenerator extends FunctionGenerator {
         );
         this.appendString(`          const response${func.name} = {`);
         this.appendString(`            funcName: "${func.name}",`);
-        this.appendString(`            type: "response",`);
+        //this.appendString(`            type: "response",`);
         this.appendString(`            result: result${func.name},`);
         this.appendString(`          };`);
         this.appendString(
           `          console.log("Sending response to function ${func.name}");`
         );
         this.appendString(
-          `          channel.sendToQueue(queueName, Buffer.from(JSON.stringify(response${func.name})));`
+          `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {correlationId: msg.properties.correlationId});`
         );
         this.appendString(`        }`);
       }
