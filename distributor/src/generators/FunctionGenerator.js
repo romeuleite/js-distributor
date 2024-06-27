@@ -89,16 +89,6 @@ export default class FunctionGenerator extends CopyPasteGenerator {
     }
     return serverURL;
   }
-  buildFunctionMap(functions) {
-    const functionMap = {};
-    functions.forEach((func) => {
-      if (!functionMap[func.server]) {
-        functionMap[func.server] = [];
-      }
-      functionMap[func.server].push(func);
-    });
-    return functionMap;
-  }
 
   /**
   * Overriding of the visitFunctionDeclaration from copypaste to generate fetch call codes
@@ -171,12 +161,16 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(
         `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
       );
-      this.appendString(`      await channel.assertQueue(queueName, {`);
-      this.appendString(`        durable: false,`);
+      // this.appendString(`      await channel.assertQueue(queueName, {`);
+      // this.appendString(`        durable: false,`);
+      this.appendString(`      const q = await channel.assertQueue('', {`);
+      this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
+      // const correlationId = generateUuid();
+      this.appendString(`      const correlationId = generateUuid();`);
       this.appendString(`      const callObj = {`);
       this.appendString(`        funcName: "${functionName}",`);
-      this.appendString(`        type: "call",`);
+      //this.appendString(`        type: "call",`);
       this.appendString(`        parameters: {`);
       for (const paramName of functionInfo.parameters) {
         this.appendString(`          ${paramName.name}: ${paramName.name},`);
@@ -184,7 +178,7 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`        },`);
       this.appendString(`      };`);
       this.appendString(`      channel.consume(`);
-      this.appendString(`        queueName,`);
+      this.appendString(`        q.queue,`);
       this.appendString(`        (msg) => {`);
       this.appendString(`          if (msg) {`);
       this.appendString(
@@ -193,8 +187,11 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(
         `            console.log("Receiving response for function ${functionName}");`
       );
+      // this.appendString(
+      //   `            if (message.funcName === "${functionName}") {`
+      // );
       this.appendString(
-        `            if (message.funcName === "${functionName}" && message.type === "response") {`
+        `            if (message.funcName === "${functionName}" && msg.properties.correlationId === correlationId) {`
       );
       this.appendString(`              const result = message.result;`);
       this.appendString(
@@ -212,8 +209,11 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(
         `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
       );
+      // this.appendString(
+      //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)));`
+      // );
       this.appendString(
-        `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)));`
+        `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {correlationId: correlationId,replyTo: q.queue});`
       );
       this.appendString(`    } catch (error) {`);
       this.appendString(
@@ -223,6 +223,11 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`    }`);
       this.appendString(`  });`);
       this.appendString(`  return p;`);
+      // Function generateUuid()
+      this.appendString(`  function generateUuid() {`);
+      this.appendString(`    return Math.random().toString() + Math.random().toString() + Math.random().toString();`);
+      this.appendString(`  }`);
+      // End Function generateUuid()
       this.appendString(`}`);
       this.appendNewLine();
     }
