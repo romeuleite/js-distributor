@@ -187,12 +187,19 @@ export default class ServerGenerator extends FunctionGenerator {
       );
       this.appendString(`  console.log("Waiting for calls");`);
       this.appendString(`  const channel = await connection.createChannel();`);
-      this.appendString(`  let queueName = "${server.rabbitmq.queue}";`);
+      //this.appendString(`  let queueName = "${server.rabbitmq.queue}";`);
+      this.appendString(`      let exchange = 'topic_${server.id}';`);
       this.appendString(
-        `  await channel.assertQueue(queueName, { durable: false });`
+        `  await channel.assertExchange(exchange, 'topic', { durable: false });`
+      );
+      this.appendString(
+        `  const q = await channel.assertQueue('', { exclusive: true });`
+      );
+      this.appendString(
+        `  await channel.bindQueue(q.queue, exchange, 'server_${server.id}');`
       );
       this.appendString(`  channel.consume(`);
-      this.appendString(`    queueName,`);
+      this.appendString(`    q.queue,`);
       this.appendString(`    async (msg) => {`);
       this.appendString(`      if (msg) {`);
       this.appendString(`        console.log("Receiving call");`);
@@ -210,7 +217,7 @@ export default class ServerGenerator extends FunctionGenerator {
           .join(", ");
 
         this.appendString(
-          `        if (message.funcName === "${func.name}") {`
+          `        if (message.funcName === "server_${func.name}") {`
         );
         this.appendString(
           `          const { ${parameters} } = message.parameters;`
@@ -222,15 +229,18 @@ export default class ServerGenerator extends FunctionGenerator {
           `          const result${func.name} = await ${func.name}(${parameters});`
         );
         this.appendString(`          const response${func.name} = {`);
-        this.appendString(`            funcName: "${func.name}",`);
+        this.appendString(`            funcName: 'function_${func.name}',`);
         //this.appendString(`            type: "response",`);
         this.appendString(`            result: result${func.name},`);
         this.appendString(`          };`);
         this.appendString(
           `          console.log("Sending response to function ${func.name}");`
         );
+        // this.appendString(
+        //   `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {correlationId: msg.properties.correlationId});`
+        // );
         this.appendString(
-          `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {correlationId: msg.properties.correlationId});`
+          `          channel.publish(exchange, response${func.name}.funcName, Buffer.from(JSON.stringify(response${func.name})));`
         );
         this.appendString(`        }`);
       }
