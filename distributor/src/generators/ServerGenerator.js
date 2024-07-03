@@ -187,25 +187,10 @@ export default class ServerGenerator extends FunctionGenerator {
       );
       this.appendString(`  console.log("Waiting for calls");`);
       this.appendString(`  const channel = await connection.createChannel();`);
-      //this.appendString(`  let queueName = "${server.rabbitmq.queue}";`);
-      this.appendString(`      let exchange = 'topic_${server.id}';`);
+      this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
       this.appendString(
         `  await channel.assertExchange(exchange, 'topic', { durable: false });`
       );
-      // this.appendString(
-      //   `  const q = await channel.assertQueue('', { exclusive: true });`
-      // );
-      // this.appendString(
-      //   `  await channel.bindQueue(q.queue, exchange, 'server_${server.id}');`
-      // );
-      // this.appendString(`  channel.consume(`);
-      // this.appendString(`    q.queue,`);
-      // this.appendString(`    async (msg) => {`);
-      // this.appendString(`      if (msg) {`);
-      // this.appendString(`        console.log("Receiving call");`);
-      // this.appendString(
-      //   `        const message = JSON.parse(msg.content.toString());`
-      // );
 
       // Loop through the functions associated with the server
       for (const func of this.functions) {
@@ -230,10 +215,6 @@ export default class ServerGenerator extends FunctionGenerator {
         this.appendString(
           `        const message = JSON.parse(msg.content.toString());`
         );
-          
-        // this.appendString(
-        //   `        if (message.funcName === "server_${func.name}") {`
-        // );
         this.appendString(
           `          const { ${parameters} } = message.parameters;`
         );
@@ -244,26 +225,19 @@ export default class ServerGenerator extends FunctionGenerator {
           `          const result${func.name} = await ${func.name}(${parameters});`
         );
         this.appendString(`          const response${func.name} = {`);
-        this.appendString(`            funcName: 'function_${func.name}',`);
-        //this.appendString(`            type: "response",`);
+        this.appendString(`            funcName: 'functions.${server.id}.${func.name}',`);
         this.appendString(`            result: result${func.name},`);
         this.appendString(`          };`);
         this.appendString(
           `          console.log("Sending response to function ${func.name}");`
         );
-        // this.appendString(
-        //   `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {correlationId: msg.properties.correlationId});`
-        // );
         this.appendString(
           `          channel.publish(exchange, response${func.name}.funcName, Buffer.from(JSON.stringify(response${func.name})));`
         );
-        //this.appendString(`        }`);
         this.appendString(`      }`);
         this.appendString(`    }, { noAck: true });`);
       }
 
-      // this.appendString(`      }`);
-      // this.appendString(`    }, { noAck: true });`);
       this.appendString(`}`);
       this.appendNewLine();
       this.appendString(`waitForCall${server.id}();`);
