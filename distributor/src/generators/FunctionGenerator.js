@@ -157,24 +157,16 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(
         `      const channel = await connection.createChannel();`
       );
-      //this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
-      this.appendString(`      let exchange = 'topic_${serverName}';`);
-      // this.appendString(
-      //   `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
-      // );
+      this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
       this.appendString(`      await channel.assertExchange(exchange, 'topic', {`);
       this.appendString(`        durable: false,`);
       this.appendString(`      });`);
       this.appendString(`      const q = await channel.assertQueue('', {`);
       this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
-      // await channel.bindQueue(q1.queue, exchange, 'A=B');
-      this.appendString(`      await channel.bindQueue(q.queue, exchange, 'function_${functionName}');`);
-      // const correlationId = generateUuid();
-      //this.appendString(`      const correlationId = generateUuid();`);
+      this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
       this.appendString(`      const callObj = {`);
       this.appendString(`        funcName: 'server_${functionName}',`);
-      //this.appendString(`        type: "call",`);
       this.appendString(`        parameters: {`);
       for (const paramName of functionInfo.parameters) {
         this.appendString(`          ${paramName.name}: ${paramName.name},`);
@@ -191,30 +183,18 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(
         `            console.log("Receiving response for function ${functionName}");`
       );
-      // this.appendString(
-      //   `            if (message.funcName === "${functionName}" && msg.properties.correlationId === correlationId) {`
-      // );
       this.appendString(`              const result = message.result;`);
       this.appendString(
         `              console.log("Response received:", result);`
       );
       this.appendString(`              resolve(result);`);
-      //this.appendString("channel.cancel(msg.fields.consumerTag);");
       this.appendString(`            }`);
-      //this.appendString(`          }`);
       this.appendString(`        },`);
       this.appendString(`        {`);
       this.appendString(`          noAck: true,`);
       this.appendString(`        }`);
       this.appendString(`      );`);
-      //this.appendString(`      channel.publish(exchange, callObj.funcName, Buffer.from(JSON.stringify(callObj)));`);
       this.appendString(`      channel.publish(exchange, 'server_${functionName}', Buffer.from(JSON.stringify(callObj)));`);
-      // this.appendString(
-      //   `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
-      // );
-      // this.appendString(
-      //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {correlationId: correlationId,replyTo: q.queue});`
-      // );
       this.appendString(`    } catch (error) {`);
       this.appendString(
         `      console.error("Error processing call to function ${functionName}:", error);`
@@ -223,9 +203,6 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`    }`);
       this.appendString(`  });`);
       this.appendString(`  return p;`);
-      // this.appendString(`  function generateUuid() {`);
-      // this.appendString(`    return Math.random().toString() + Math.random().toString() + Math.random().toString();`);
-      // this.appendString(`  }`);
       this.appendString(`}`);
       this.appendNewLine();
     }
