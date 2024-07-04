@@ -1,333 +1,257 @@
+import CopyPasteGenerator from "./copypaste-generator.js";
 import { StringBuilder } from "./generator-utils.js";
-import FunctionGenerator from "./FunctionGenerator.js";
 import fs from "fs";
-import beautify from "js-beautify";
+import yaml from "js-yaml";
+import path from "path";
 
-export default class ServerGenerator extends FunctionGenerator {
-  constructor() {
+export default class FunctionGenerator extends CopyPasteGenerator {
+  constructor(outputDir) {
     super();
-    this.currentServerName = "";
-    this.functionsImportedInsideServer = new Map();
-    this.filesInitialized = [];
-    this.waitForCallFunctionsInitialized = [];
+    this.outputDir = outputDir;
+    this.servers = [];
+    this.functions = [];
+    this.numServers = 0;
+    this.nameOfProject = "";
+    this.functionDeclared = {};
+    this.codeGenerated = new Map();
+    this.amqpImported = false;
+    this.functionMap = this.buildFunctionMap(this.functions);
+    this.loadYAML();
   }
 
   /**
-   * Generates corresponding code of the get or post fetch route of the corresponding function
-   * @param {*} functionInfo - information of the route function
+   * Loads information from the YAML file into the class attributes.
    */
-  generateRouteCode(functionInfo) {
-    if (functionInfo.method.toUpperCase() === "GET") {
-      this.appendString(`app.get('/${functionInfo.name}`);
-      this.appendString("'");
-      this.appendString(`,async (req, res) => {`);
-    } else if (functionInfo.method.toUpperCase() === "POST") {
-      this.appendString(
-        `app.post('/${functionInfo.name}', async (req, res) => {`
-      );
-    } else if (functionInfo.method.toUpperCase() !== "RABBIT") {
-      console.error("Invalid method. It must be get, post or rabbit");
+  loadYAML() {
+    try {
+      const yamlPath = path.resolve("config.yml");
+      const config = yaml.load(fs.readFileSync(yamlPath, "utf8"));
+      this.servers = config.servers;
+      this.functions = config.functions;
+      this.numServers = this.servers.length;
+    } catch (e) {
+      console.error("Erro ao carregar o arquivo YAML:", e);
     }
   }
 
-  /**
-   * Determines if the passed function is async or not
-   * @param {*} functionInfo - information of the function to test asynchronicity
-   * @param {*} functionDeclCtx - context of the function being tested
-   * @returns - true if function is async and false otherwise
-   */
-  checkAsyncFunction(functionInfo, functionDeclCtx) {
-    /* checks if there is another function defined in the yaml inside the body of the tested function;
-  if there is, the tested function may make a call to another one that is in another server
-  and, therefore, it is asynchronous */
-    for (let funct of this.functions) {
-      if (
-        funct.name !== functionInfo.name &&
-        functionDeclCtx.functionBody().getText().includes(funct.name) &&
-        funct.server !== this.currentServerName
-      ) {
-        return true;
+  buildFunctionMap(functions) {
+    const functionMap = {};
+    functions.forEach((func) => {
+      if (!functionMap[func.server]) {
+        functionMap[func.server] = [];
       }
-    }
-    return false;
+      functionMap[func.server].push(func);
+    });
+    return functionMap;
   }
 
+  
   /**
-   * Determines if a generated anonymous arrow function is async or not
-   * @param {*} ctx - context of the anonymous arrow function
-   * @returns - true if it's asynchronous or false if it's synchronous
-   */
-  checkAsyncAnounymousArrowFunction(ctx) {
-    let isAsync = false;
-    if (ctx.arrowFunctionBody()) {
-      // checks if there is any yaml function inside the body of the arrow function that does not belong
-      // to the current server; if there is, its call is a fetch and therefore the function is async
-      for (let functionInfo of this.functions) {
-        let functionServer = functionInfo.server;
-        if (
-          ctx.arrowFunctionBody().getText().includes(functionInfo.name) &&
-          functionServer !== this.currentServerName
-        )
-          isAsync = true;
+  * Generates fetch call URLs corresponding to the functions, using query to
+  * pass arguments for GET calls and body for POST calls.
+  * @param {*} server - server information to which the call belongs
+  * @param {*} functionInfo - information about the function being called
+  * @param {*} args - possible arguments of the function
+  * @returns - URL of the call
+  */
+  generateServerUrl(server, functionInfo, args) {
+    let serverURL = `http://${server.url}:${server.port}/${functionInfo.name}`;
+
+    if (functionInfo.method.toUpperCase() === "POST") {
+      let bodyCallInsideReq = "";
+      if (functionInfo.parameters.length > 0) {
+        let body = `{`;
+        for (let parameter of functionInfo.parameters) {
+          body += `${parameter.name}: ${parameter.name},`;
+        }
+        body += `};`;
+        this.appendString(`let body = ${body}`);
+        this.appendString(`body = JSON.stringify(body);`);
+        bodyCallInsideReq = "body: body";
       }
-    }
-
-    return isAsync;
-  }
-
-  /**
-   * Determines if a generated anonymous function is async or not
-   * @param {*} ctx - context of the anonymous function
-   * @returns - true if it's asynchronous or false if it's synchronous
-   */
-  checkAsyncAnounymousFunctionDecl(ctx) {
-    let isAsync = false;
-    if (ctx.functionBody()) {
-      // checks if there is any yaml function inside the body of the arrow function that does not belong
-      // to the current server; if there is, its call is a fetch and therefore the function is async
-      for (let functionInfo of this.functions) {
-        let functionServer = functionInfo.server;
+      let reqPostBody = `\nmethod: "POST", \nheaders: {`;
+      reqPostBody += `"Content-type": "application/json",\n}, ${bodyCallInsideReq}`;
+      serverURL += `', { ${reqPostBody}}`;
+    } else if (
+      functionInfo.method.toUpperCase() === "GET" &&
+      functionInfo.parameters.length > 0
+    ) {
+      serverURL += "?";
+      for (let i = 0; i < functionInfo.parameters.length; i++) {
+        serverURL += `${functionInfo.parameters[i].name}=' + ${args[i]}`;
         if (
-          ctx.functionBody().getText().includes(functionInfo.name) &&
-          functionServer !== this.currentServerName
-        )
-          isAsync = true;
-      }
-    }
-
-    return isAsync;
-  }
-
-  /**
-   * Checks if a given waitForCall function has already been declared in the server
-   * @param {*} waitForCallFunctionSearched - waitForCall function to test
-   * @returns - true if waitForCall has already been declared; false otherwise
-   */
-  checkWaitForCallFunctionsInitialized(waitForCallFunctionSearched) {
-    // checks if waitForCall has already been initialized within the same input file or another previous one
-    return (
-      this.waitForCallFunctionsInitialized.includes(
-        waitForCallFunctionSearched
-      ) ||
-      this.checkWaitForCallFunctionsInitializedAux(waitForCallFunctionSearched)
-    );
-  }
-
-  /**
-   * Checks if a given waitForCall has been initialized on the server by another previous input file;
-   * To do this, it must read the file
-   * @param {*} waitForCallFunctionSearched - waitForCall function to test
-   * @returns - true if waitForCall has already been declared; false otherwise
-   */
-  checkWaitForCallFunctionsInitializedAux(waitForCallFunctionSearched) {
-    const waitForCallInvokedCode = `${waitForCallFunctionSearched}();`;
-
-    const filepath = `./src-gen/start-${this.currentServerName}.js`;
-
-    // if current server file exists and server has been initialized (previous input files
-    // have already written to it) test if waitForCallInvokedCode already exists
-    if (fs.existsSync(filepath) && this.filesInitialized.includes(filepath)) {
-      try {
-        // reads the current state of the server
-        const code = fs.readFileSync(filepath, "utf8");
-
-        // tests if waitForCall has already been defined on the server
-        if (
-          code.includes(
-            beautify(waitForCallInvokedCode, {
-              indent_size: 4,
-              space_in_empty_paren: true,
-            })
-          )
+          functionInfo.parameters.length > 0 &&
+          i !== functionInfo.parameters.length - 1
         ) {
-          return true; // if it has, return true
-        } else return false; // if it hasn't, return false
-      } catch (e) {
-        console.log(e);
-        return;
+          serverURL += "+ '&";
+        }
       }
     }
-
-    return false;
+    return serverURL;
   }
 
   /**
-   * Overwrite of visitFunctionDeclaration of the copypaste to generate corresponding code on the server
-   * for each yaml function
-   * @param {*} ctx - function context
-   */
+  * Overriding of the visitFunctionDeclaration from copypaste to generate fetch call codes
+  * or Rabbit's WaitForCall.
+  * @param {*} ctx - function context
+  */
   visitFunctionDeclaration(ctx) {
     const functionName = ctx.identifier().getText();
     const functionInfo = this.functions.find(
       (func) => func.name === functionName
     );
+    const serverName = functionInfo.server;
+    const server = this.servers.find((server) => server.id === serverName);
+    let args = [];
 
-    if (!functionInfo)
-      console.error(
-        `Function with name "${functionName}" not found in the YAML file.`
-      );
+    if (functionInfo.method.toUpperCase() !== "RABBIT") {
+      this.appendString(`export async function ${functionName}(`);
 
-    const isAsync =
-      ctx.Async() !== null ||
-      this.checkAsyncFunction(functionInfo, ctx);
-    const server = this.servers.find((s) => s.id === functionInfo.server);
-
-    // if the generated function is a rabbitmq method, return to generate nothing
-    if (
-      functionInfo &&
-      functionInfo.method.toUpperCase() === "RABBIT" &&
-      !this.checkWaitForCallFunctionsInitialized(`waitForCall${server.id}`)
-    ) {
-      const waitForCallFunction = `waitForCall${server.id}`;
-
-      this.appendString(`async function ${waitForCallFunction}() {`);
-      this.appendString(
-        `  const connection = await amqp.connect("${server.rabbitmq.connectionUrl || "amqp://localhost"
-        }");`
-      );
-      this.appendString(`  console.log("Waiting for calls");`);
-      this.appendString(`  const channel = await connection.createChannel();`);
-      this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
-      this.appendString(
-        `  await channel.assertExchange(exchange, 'direct', { durable: false });`
-      );
-
-      // Loop through the functions associated with the server
-      for (const func of this.functions) {
-        // if the function is not rabbit or does not belong to the server, skip to the next one
-        if (func.method.toUpperCase() !== "RABBIT" || func.server !== server.id)
-          continue;
-        const parameters = func.parameters
-          .map((param) => param.name)
-          .join(", ");
-
-        this.appendString(
-          `  const q${func.name} = await channel.assertQueue('', { exclusive: true });`
-        );
-        this.appendString(
-          `  await channel.bindQueue(q${func.name}.queue, exchange, 'server_${func.name}');`
-        );
-        this.appendString(`  channel.consume(`);
-        this.appendString(`    q${func.name}.queue,`);
-        this.appendString(`    async (msg) => {`);
-        this.appendString(`      if (msg) {`);
-        this.appendString(`        console.log("Receiving call");`);
-        this.appendString(
-          `        const message = JSON.parse(msg.content.toString());`
-        );
-        this.appendString(
-          `          const { ${parameters} } = message.parameters;`
-        );
-        this.appendString(
-          `          console.log("Calling function ${func.name}", ${parameters});`
-        );
-        this.appendString(
-          `          const result${func.name} = await ${func.name}(${parameters});`
-        );
-        this.appendString(`          const response${func.name} = {`);
-        this.appendString(`            funcName: 'functions.${server.id}.${func.name}',`);
-        this.appendString(`            result: result${func.name},`);
-        this.appendString(`          };`);
-        this.appendString(
-          `          console.log("Sending response to function ${func.name}");`
-        );
-        this.appendString(
-          `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})));`
-        );
-        this.appendString(`      }`);
-        this.appendString(`    }, { noAck: true });`);
+      if (ctx.formalParameterList()) {
+        args = this.visitFormalParameterList(ctx.formalParameterList());
       }
 
+      this.appendString(`) {`);
+      this.appendNewLine();
+      let serverURL = this.generateServerUrl(server, functionInfo, args);
+
+      let fetchCode = "";
+      if (functionInfo.method.toUpperCase() === "POST") {
+        fetchCode = `const response = await fetch('${serverURL});`;
+      } else if (
+        functionInfo.method.toUpperCase() === "GET" &&
+        functionInfo.parameters.length > 0
+      ) {
+        fetchCode = `const response = await fetch('${serverURL});`;
+      } else if (
+        functionInfo.method.toUpperCase() === "GET" &&
+        functionInfo.parameters.length === 0
+      ) {
+        fetchCode = `const response = await fetch('${serverURL}');`;
+      }
+
+      this.appendString(fetchCode);
+      this.appendString("const { result } = await response.json();");
+      this.appendString("return result;");
+      this.appendNewLine();
       this.appendString(`}`);
-      this.appendNewLine();
-      this.appendString(`waitForCall${server.id}();`);
-      this.appendNewLine();
-
-      this.waitForCallFunctionsInitialized.push(waitForCallFunction);
-    } else if (
-      (functionInfo && functionInfo.method.toUpperCase() === "GET") ||
-      functionInfo.method.toUpperCase() === "POST"
-    ) {
-      // generation of the post or get route code
-      this.generateRouteCode(functionInfo);
-
-      // parameters in GET routes are by query and POST by body
-      const queryOrBody =
-        functionInfo.method.toUpperCase() === "POST" ? "body" : "query";
-
-      // Processing function parameters from yaml
-      functionInfo.parameters.forEach((param) => {
-        this.appendString(
-          `  const ${param.name} = req.${queryOrBody}.${param.name};`
-        );
-      });
-      this.appendString();
-
-      // generating call of the original function
-      if (isAsync) this.appendString(`  const result = await ${functionName}(`);
-      else this.appendString(`  const result = ${functionName}(`);
+    } else if (functionInfo.method.toUpperCase() === "RABBIT") {
       const paramNames = functionInfo.parameters
         .map((param) => param.name)
         .join(", ");
-      this.appendString(`    ${paramNames}`);
-      this.appendString(`  );`);
-      this.appendString(`  return res.json({ result });`);
-      this.appendString(`});`);
-      this.appendString();
-    }
+      const connectionUrl = server.rabbitmq.connectionUrl || "amqp://localhost";
 
-    const paramNames = functionInfo.parameters
-      .map((param) => param.name)
-      .join(", ");
-    // copy of the original function that stays on the server to be called by the route
-    if (isAsync)
-      this.appendString(`async function ${functionName}(${paramNames})`);
-    else this.appendString(`function ${functionName}(${paramNames})`);
-    if (ctx.functionBody()) {
-      this.visitFunctionBody(ctx.functionBody());
+      this.appendString(
+        `export async function ${functionName}(${paramNames}) {`
+      );
+      this.appendString(`  const p = new Promise(async (resolve, reject) => {`);
+      this.appendString(`    try {`);
+      this.appendString(`      console.log("Connecting to RabbitMQ...");`);
+      this.appendString(
+        `      const connection = await amqp.connect("${connectionUrl}");`
+      );
+      this.appendString(`      console.log("Connection established!");`);
+      this.appendString(
+        `      console.log("Sending call to function ${functionName}");`
+      );
+      this.appendString(
+        `      const channel = await connection.createChannel();`
+      );
+      this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
+      this.appendString(`      await channel.assertExchange(exchange, 'direct', {`);
+      this.appendString(`        durable: false,`);
+      this.appendString(`      });`);
+      this.appendString(`      const q = await channel.assertQueue('', {`);
+      this.appendString(`        exclusive: true,`);
+      this.appendString(`      });`);
+      //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
+      this.appendString(`      const callObj = {`);
+      this.appendString(`        funcName: 'server_${functionName}',`);
+      this.appendString(`        parameters: {`);
+      for (const paramName of functionInfo.parameters) {
+        this.appendString(`          ${paramName.name}: ${paramName.name},`);
+      }
+      this.appendString(`        },`);
+      this.appendString(`      };`);
+      this.appendString(`      channel.consume(`);
+      this.appendString(`        q.queue,`);
+      this.appendString(`        (msg) => {`);
+      this.appendString(`          if (msg) {`);
+      this.appendString(
+        `            const message = JSON.parse(msg.content.toString());`
+      );
+      this.appendString(
+        `            console.log("Receiving response for function ${functionName}");`
+      );
+      this.appendString(`              const result = message.result;`);
+      this.appendString(
+        `              console.log("Response received:", result);`
+      );
+      this.appendString(`              resolve(result);`);
+      this.appendString(`            }`);
+      this.appendString(`        },`);
+      this.appendString(`        {`);
+      this.appendString(`          noAck: true,`);
+      this.appendString(`        }`);
+      this.appendString(`      );`);
+      this.appendString(`      channel.publish(exchange, 'server_${functionName}', Buffer.from(JSON.stringify(callObj)), {`);
+      this.appendString(`       replyTo: q.queue`);
+      this.appendString(`      });`);
+      this.appendString(`    } catch (error) {`);
+      this.appendString(
+        `      console.error("Error processing call to function ${functionName}:", error);`
+      );
+      this.appendString(`      reject(error);`);
+      this.appendString(`    }`);
+      this.appendString(`  });`);
+      this.appendString(`  return p;`);
+      this.appendString(`}`);
+      this.appendNewLine();
     }
   }
 
   /**
-   * Checks if there are functions that should be imported
-   * @param {*} ctx - arguments expression context
-   */
-  visitArgumentsExpression(ctx) {
-    const functionName = ctx.children[0].getText();
-    const functionInfo = this.functions.find(
-      (func) => func.name === functionName
-    );
+  * Overriding visitFormalParameterList to obtain a list with generated function arguments and
+  * also generate corresponding code for the formalParameterList rule.
+  * @param {*} ctx - formalParameterList context
+  * @returns - list with function arguments
+  */
+  visitFormalParameterList(ctx) {
+    const args = [];
+    if (ctx.formalParameterArg().length !== 0) {
+      for (let i = 0; i < ctx.formalParameterArg().length; i++) {
+        this.visitFormalParameterArg(ctx.formalParameterArg(i));
+        args.push(ctx.formalParameterArg(i).assignable().getText());
+        if (i !== ctx.formalParameterArg().length - 1) this.appendString(", ");
+      }
 
-    // if function in arguments expression is not from this server, it is imported
-    if (functionInfo && functionInfo.server !== this.currentServerName) {
-      this.generateImports(functionInfo, ctx.children[1]);
+      if (ctx.lastFormalParameterArg()) {
+        this.appendString(",");
+        this.visitLastFormalParameterArg(ctx.lastFormalParameterArg());
+        args.push(ctx.formalParameterArg(i).assignable().getText());
+      }
+    } else {
+      this.visitLastFormalParameterArg(ctx.lastFormalParameterArg());
+      args.push(ctx.formalParameterArg(i).assignable().getText());
     }
 
-    // to avoid repeated awaits in async functions with await call
-    if (
-      functionInfo &&
-      !ctx.parentCtx.getText().includes("await") &&
-      functionInfo.server !== this.currentServerName
-    )
-      this.appendString("await ");
-
-    super.visitArgumentsExpression(ctx);
+    return args;
   }
 
   /**
-   * Generates corresponding code in the server for functions defined with export in the input
-   * file
-   * @param {*} ctx - exportStatement context
-   * @param {*} funct - function from yaml being tested to check if it is in the exportStatement
-   */
+  * Overriding of visitExportStatement to test if there is any function defined in the YAML file with
+  * export in the input file and generate corresponding code.
+  * @param {*} ctx - exportStatement context
+  * @param {*} funct - function defined in the YAML file that is checked in the exportStatement
+  * @returns - void
+  */
   visitExportStatement(ctx, funct) {
     const declarationCtx = ctx.declaration();
-    // if exportStatement doesn't have declaration, there's nothing to generate
     if (!declarationCtx) return;
     else if (
       declarationCtx.functionDeclaration() &&
       ctx.declaration().functionDeclaration().identifier().getText() ===
-      funct.name
+        funct.name
     ) {
       this.currentFunction = funct;
       this.currentServerName = funct.server;
@@ -340,12 +264,12 @@ export default class ServerGenerator extends FunctionGenerator {
     }
   }
 
+  
   /**
-   * Helper function to test if each sourceElement is a parent of an exportStatement that can
-   * be parent of a function declaration
-   * @param {*} sourceElementCtx - sourceElement context
-   * @param {*} funct - function from yaml being tested
-   */
+  * Helper function to test YAML function definitions by export.
+  * @param {*} sourceElementCtx - sourceElement context
+  * @param {*} funct - YAML function being searched
+  */
   checkExportFunctionsDeclarations(sourceElementCtx, funct) {
     if (sourceElementCtx.statement().exportStatement()) {
       const exportStatementCtx = sourceElementCtx.statement().exportStatement();
@@ -354,152 +278,47 @@ export default class ServerGenerator extends FunctionGenerator {
   }
 
   /**
-   * Overwrite of visitAnonymousFunctionDecl to generate adapted code for the server
-   * @param {*} ctx - AnonymousFunctionDecl context
-   */
-  visitAnonymousFunctionDecl(ctx) {
-    if (ctx.Async() || this.checkAsyncAnounymousFunctionDecl(ctx))
-      this.appendString("async ");
-    this.appendTokens(ctx.Function_());
-    if (
-      ctx.children[0].getText().includes("*") ||
-      ctx.children[1].getText().includes("*")
-    )
-      this.appendString("*");
-    this.appendString("(");
-    if (ctx.formalParameterList())
-      this.visitFormalParameterList(ctx.formalParameterList());
-    this.appendString(")");
-    this.visitFunctionBody(ctx.functionBody());
-  }
-
-  /**
-   * Overwrite of visitArrowFunction to generate adapted code for the server
-   * @param {*} ctx - arrowFunction context
-   */
-  visitArrowFunction(ctx) {
-    if (ctx.Async() || this.checkAsyncAnounymousArrowFunction(ctx))
-      this.appendString("async ");
-    this.visitArrowFunctionParameters(ctx.arrowFunctionParameters());
-    this.appendString(" => ");
-    this.visitArrowFunctionBody(ctx.arrowFunctionBody());
-  }
-
-  /**
-   * Checks if a certain import that needs to be done has already been done or not
-   * @param {*} importSearched - string with import being tested
-   * @param {*} functionInfo - information of the function that is being imported
-   * @returns - true for double import, false otherwise
-   */
-  checkDoubleImport(importSearched, functionInfo) {
-    let isAlreadyImported = false;
-    const functionsImported = this.functionsImportedInsideServer.get(
-      this.currentServerName
-    );
-
-    // checks if imported function has already been imported by the current input file
-    if (functionsImported)
-      isAlreadyImported = functionsImported.includes(functionInfo.name);
-
-    // checks if imported function has already been imported by another previous input file
-    return isAlreadyImported || this.checkDoubleImportAux(importSearched);
-  }
-
-  /**
-   * Helper function to check if the import being made has already been done in previous executions
-   * of previous input files in the server.
-   * @param {*} importSearched - The import being searched.
-   * @returns - True if the import has already been made, false otherwise.
-   */
-  checkDoubleImportAux(importSearched) {
-    const filepath = `./src-gen/start-${this.currentServerName}.js`;
-
-    // If the current server file exists and the server has already been initialized (previous input
-    // files have already written to it)
-    if (fs.existsSync(filepath) && this.filesInitialized.includes(filepath)) {
-      try {
-        const code = fs.readFileSync(filepath, "utf8");
-
-        // Tests if the import being made is already present in the server
-        if (
-          code.includes(
-            beautify(importSearched, {
-              indent_size: 4,
-              space_in_empty_paren: true,
-            })
-          )
-        ) {
-          return true;
-        } else return false;
-      } catch (e) {
-        console.log(e);
-        return;
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Appends the necessary import at the beginning of the server file.
-   * @param {*} functionInfo - information about the function being imported
-   */
-  generateImports(functionInfo) {
-    const filename = `functions-${functionInfo.server}.js`;
-    const importPath = `./${filename}`;
-    let importCode = `import { ${functionInfo.name} } from "${importPath}";`;
-
-    // Verifies if the import is not being duplicated.
-    if (!this.checkDoubleImport(importCode, functionInfo)) {
-      // If the import already exists in the generated code, it will be grouped with it.
-      if (this.codeGenerated.get(this.currentServerName))
-        importCode += this.codeGenerated.get(this.currentServerName);
-      this.codeGenerated.set(this.currentServerName, importCode);
-      this.functionsImportedInsideServer.set(
-        this.currentServerName,
-        functionInfo.name
-      );
-    }
-  }
-
-  /**
-   * Traverses SourceElements searching for function definitions present in the YAML file to generate
-   * corresponding code on the server for each found function.
-   * @param {*} ctx - root of the semantic tree
-   * @param {*} filesInitialized - array containing names of already initialized server files
-   * @returns - generated server code
-   */
-  generateFunctions(ctx, filesInitialized) {
-    this.filesInitialized = filesInitialized;
+  * Traverses SourceElements in search of function definitions that are present in the YAML file to
+  * generate corresponding code in fetch calls or Rabbit's WaitForCall.
+  * @param {*} ctx - root of the semantic tree
+  * @returns - generated code corresponding to the found functions
+  */
+  generateFunctions(ctx) {
     if (ctx.sourceElements()) {
       const sourceElements = ctx.sourceElements().children;
       for (let i in sourceElements) {
+        
         if (
           sourceElements[i].statement().functionDeclaration() ||
           sourceElements[i].statement().exportStatement()
         ) {
           this.stringBuilder = new StringBuilder();
           for (let funct of this.functions) {
-            if (
-              sourceElements[i].statement().functionDeclaration() &&
-              funct.name ===
-              sourceElements[i]
-                .statement()
+            const statement = sourceElements[i].statement();
+            if (statement.functionDeclaration()) {
+              const functionName = statement
                 .functionDeclaration()
                 .identifier()
-                .getText()
-            ) {
-              this.currentFunction = funct;
-              this.currentServerName = funct.server;
-              this.visitFunctionDeclaration(
-                sourceElements[i].statement().functionDeclaration()
-              );
-              let newCode = this.codeGenerated.get(funct.server);
-              if (!newCode) newCode = this.stringBuilder.toString();
-              else newCode += this.stringBuilder.toString();
-              this.codeGenerated.set(funct.server, newCode);
-              this.currentServerName = "";
-            } else if (sourceElements[i].statement().exportStatement()) {
+                .getText();
+              if (funct.name === functionName) {
+                if (
+                  funct.method.toUpperCase() === "POST" ||
+                  funct.method.toUpperCase() === "GET" ||
+                  funct.method.toUpperCase() === "RABBIT"
+                ) {
+                  this.visitFunctionDeclaration(
+                    statement.functionDeclaration()
+                  );
+                  let newCode = this.codeGenerated.get(funct.server);
+                  if (newCode === undefined) {
+                    newCode = this.stringBuilder.toString();
+                  } else {
+                    newCode += this.stringBuilder.toString();
+                  }
+                  this.codeGenerated.set(funct.server, newCode);
+                }
+              }
+            } else if (statement.exportStatement()) {
               this.checkExportFunctionsDeclarations(sourceElements[i], funct);
             }
           }
@@ -507,114 +326,5 @@ export default class ServerGenerator extends FunctionGenerator {
       }
     }
     return this.codeGenerated;
-  }
-
-  /**
-   * Traverses SourceElements searching for function definitions present in the YAML file to determine
-   * if they should be present in the given server
-   * @param {*} ctx - root of the semantic tree
-   * @param {*} serverName - the server to be checked
-   * @param {*} config - the configuration loaded from the YAML file
-   * @returns - true if this visitor encounters a function that is present in the given server, false otherwise
-   */
-  hasFunctionInServer(ctx, serverName, config) {
-    if (ctx.sourceElements()) {
-      const sourceElements = ctx.sourceElements().children;
-      for (let i in sourceElements) {
-        if (sourceElements[i].statement().functionDeclaration() ||
-          sourceElements[i].statement().exportStatement()) {
-          for (let funct of config.functions) {
-            if (
-              sourceElements[i].statement().functionDeclaration() &&
-              funct.name ===
-              sourceElements[i]
-                .statement()
-                .functionDeclaration()
-                .identifier()
-                .getText() &&
-              funct.server === serverName
-            ) {
-              return true;
-            } else if (sourceElements[i].statement().exportStatement() &&
-              sourceElements[i].statement().exportStatement().declaration() &&
-              sourceElements[i].statement().exportStatement().declaration().functionDeclaration() &&
-              funct.name ===
-              sourceElements[i].statement().exportStatement().declaration().functionDeclaration().identifier().getText() &&
-              funct.server === serverName) {
-              return true;
-
-            }
-          }
-        }
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Checks if the given function is present in the config. This is used to avoid generating an import for
-   * a function that will be imported by the generated code.
-   * @param {*} functionName - the name of the function to check
-   * @param {*} config - the configuration loaded from the YAML file
-   * @returns - true if this function is part of the config file, false otherwise
-   */
-  isAFunctionFromConfigFile(functionName, config) {
-    for (let funct of config.functions) {
-      if (funct.name === functionName) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
-   * Traverses SourceElements searching for all elements that are not function definitions present in the YAML file to generate
-   * corresponding code on each server. These elements are, possibly, required imports, constants and other functions.
-   * TODO: We could change this function to generate code for functions too, if they do not appear in the config file,
-   * but this requires some studying
-   * @param {*} fileName - the file where to look for the elements
-   * @param {*} ctx - root of the semantic tree
-   * @param {*} serverName - the server for which code is being generated
-   * @param {*} config - the configuration loaded from the YAML file
-   * @returns - generated server code for all elements except functions
-   */
-  generateGlobalElements(fileName, ctx, serverName, config) {
-    // this.stringBuilder.appendNewLine();
-    // this.stringBuilder.append(`// Scanning global elements in ${fileName} for ${serverName}\n`);
-    if (ctx.sourceElements() && this.hasFunctionInServer(ctx, serverName, config)) {
-      const sourceElements = ctx.sourceElements().children;
-      for (let i in sourceElements) {
-        if (!(
-          sourceElements[i].statement().functionDeclaration() ||
-          sourceElements[i].statement().exportStatement()
-        )) {
-          const stmt = sourceElements[i].statement();
-          if (stmt.importStatement() &&
-            stmt.importStatement().importFromBlock() &&
-            stmt.importStatement().importFromBlock().importModuleItems()) {
-            const importFrom = stmt.importStatement().importFromBlock().importFrom().StringLiteral().getText();
-            const importedModuleItems = stmt.importStatement().importFromBlock().importModuleItems();
-            for (let importAliasName of importedModuleItems.importAliasName()) {
-              const moduleExportName = importAliasName.moduleExportName();
-              const importedBinding = importAliasName.importedBinding();
-              if (!importedBinding) {
-                if (!this.isAFunctionFromConfigFile(moduleExportName.getText(), config)) {
-                  this.stringBuilder.append(`\nimport { ${moduleExportName.getText()} } from ${importFrom};\n`);
-                }
-              } else {
-                if (!this.isAFunctionFromConfigFile(importedBinding.getText(), config)) {
-                  this.stringBuilder.append(`\nimport { ${moduleExportName.getText()} as ${importedBinding.getText()} } from ${importFrom};\n`);
-                }
-              }
-            }
-          } else {
-            this.visitSourceElement(sourceElements[i].statement());
-          }
-        }
-      }
-    }
-    // this.stringBuilder.appendNewLine();
-    // this.stringBuilder.append(`// End of global elements in ${fileName} for ${serverName}\n`);
-    return this.stringBuilder.toString();
   }
 }
