@@ -232,7 +232,7 @@ export default class ServerGenerator extends FunctionGenerator {
           `          console.log("Sending response to function ${func.name}");`
         );
         this.appendString(
-          `          channel.publish(exchange, response${func.name}.funcName, Buffer.from(JSON.stringify(response${func.name})));`
+          `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})));`
         );
         this.appendString(`      }`);
         this.appendString(`    }, { noAck: true });`);
