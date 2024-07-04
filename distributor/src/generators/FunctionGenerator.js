@@ -164,7 +164,7 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`      const q = await channel.assertQueue('', {`);
       this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
-      this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
+      //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
       this.appendString(`      const callObj = {`);
       this.appendString(`        funcName: 'server_${functionName}',`);
       this.appendString(`        parameters: {`);
@@ -194,7 +194,9 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`          noAck: true,`);
       this.appendString(`        }`);
       this.appendString(`      );`);
-      this.appendString(`      channel.publish(exchange, 'server_${functionName}', Buffer.from(JSON.stringify(callObj)));`);
+      this.appendString(`      channel.publish(exchange, 'server_${functionName}', Buffer.from(JSON.stringify(callObj)), {`);
+      this.appendString(`       replyTo: q.queue`);
+      this.appendString(`      });`);
       this.appendString(`    } catch (error) {`);
       this.appendString(
         `      console.error("Error processing call to function ${functionName}:", error);`
