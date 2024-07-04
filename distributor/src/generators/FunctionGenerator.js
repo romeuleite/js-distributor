@@ -157,15 +157,27 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(
         `      const channel = await connection.createChannel();`
       );
-      this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
-      this.appendString(
-        `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
-      );
-      // this.appendString(`      await channel.assertQueue(queueName, {`);
-      // this.appendString(`        durable: false,`);
       this.appendString(`      const q = await channel.assertQueue('', {`);
       this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
+      if(server.rabbitmq.exchange_type === 'direct' || server.rabbitmq.exchange_type === 'fanout' || server.rabbitmq.exchange_type === 'topic'){
+        this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
+        this.appendString(`      await channel.assertExchange(exchange, '${server.rabbitmq.exchange_type}', {`);
+        this.appendString(`        durable: false,`);
+        this.appendString(`      });`);
+        //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
+      } else {
+        this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
+        this.appendString(
+          `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
+        );
+      }
+      //this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
+      // this.appendString(
+      //   `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
+      // );
+      // this.appendString(`      await channel.assertQueue(queueName, {`);
+      // this.appendString(`        durable: false,`);
       // const correlationId = generateUuid();
       this.appendString(`      const correlationId = generateUuid();`);
       this.appendString(`      const callObj = {`);
@@ -206,15 +218,27 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`          noAck: true,`);
       this.appendString(`        }`);
       this.appendString(`      );`);
-      this.appendString(
-        `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
-      );
+      // this.appendString(
+      //   `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
+      // );
       // this.appendString(
       //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)));`
       // );
-      this.appendString(
-        `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {correlationId: correlationId,replyTo: q.queue});`
-      );
+      if(server.rabbitmq.exchange_type === 'direct' || server.rabbitmq.exchange_type === 'fanout' || server.rabbitmq.exchange_type === 'topic'){
+        this.appendString(
+          `      channel.publish(exchange, 'server_${functionName}', Buffer.from(JSON.stringify(callObj)), {`);
+      } else {
+        this.appendString(
+          `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
+        );
+        this.appendString(
+          `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {`);
+      }
+      // this.appendString(
+      //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {`);
+      this.appendString(`           correlationId: correlationId,`);
+      this.appendString(`           replyTo: q.queue`);
+      this.appendString(`       });`);
       this.appendString(`    } catch (error) {`);
       this.appendString(
         `      console.error("Error processing call to function ${functionName}:", error);`
