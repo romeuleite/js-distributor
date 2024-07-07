@@ -179,6 +179,7 @@ export default class ServerGenerator extends FunctionGenerator {
       !this.checkWaitForCallFunctionsInitialized(`waitForCall${server.id}`)
     ) {
       const waitForCallFunction = `waitForCall${server.id}`;
+      const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
 
       this.appendString(`async function ${waitForCallFunction}() {`);
       this.appendString(
@@ -187,10 +188,10 @@ export default class ServerGenerator extends FunctionGenerator {
       );
       this.appendString(`  console.log("Waiting for calls");`);
       this.appendString(`  const channel = await connection.createChannel();`);
-      if(server.rabbitmq.exchange_type === 'direct' || server.rabbitmq.exchange_type === 'fanout' || server.rabbitmq.exchange_type === 'topic'){
+      if(isExchange){
         this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
         this.appendString(
-          `  await channel.assertExchange(exchange, '${server.rabbitmq.exchange_type}', { durable: false });`
+          `  await channel.assertExchange(exchange, '${server.rabbitmq.type}', { durable: false });`
         );
       } else {
         this.appendString(`  let queueName = "${server.rabbitmq.queue}";`);
@@ -228,12 +229,19 @@ export default class ServerGenerator extends FunctionGenerator {
           .map((param) => param.name)
           .join(", ");
 
-        if(server.rabbitmq.exchange_type === 'direct' || server.rabbitmq.exchange_type === 'fanout' || server.rabbitmq.exchange_type === 'topic'){
+        if(isExchange){
+          let routingKey = `server_${func.name}`;
+          if(server.rabbitmq.type === 'topic'){
+            routingKey = `server.${func.name}`;
+          }
+          if(server.rabbitmq.type === 'fanout'){
+            routingKey = ``;
+          }
           this.appendString(
             `  const q${func.name} = await channel.assertQueue('', { exclusive: true });`
           );
           this.appendString(
-            `  await channel.bindQueue(q${func.name}.queue, exchange, 'server_${func.name}');`
+            `  await channel.bindQueue(q${func.name}.queue, exchange, '${routingKey}');`
           );
           this.appendString(`  channel.consume(`);
           this.appendString(`    q${func.name}.queue,`);
@@ -269,7 +277,7 @@ export default class ServerGenerator extends FunctionGenerator {
         this.appendString(
           `          console.log("Sending response to function ${func.name}");`
         );
-        if(server.rabbitmq.exchange_type === 'direct' || server.rabbitmq.exchange_type === 'fanout' || server.rabbitmq.exchange_type === 'topic'){
+        if(isExchange){
           //channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(responsefuncao1)));
           this.appendString(
             `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
@@ -299,7 +307,7 @@ export default class ServerGenerator extends FunctionGenerator {
         // );
         // this.appendString(`        }`);
       }
-      if(server.rabbitmq.exchange_type !== 'direct' && server.rabbitmq.exchange_type !== 'fanout' && server.rabbitmq.exchange_type !== 'topic'){
+      if(server.rabbitmq.type !== 'direct' && server.rabbitmq.type !== 'fanout' && server.rabbitmq.type !== 'topic'){
         this.appendString(`        }`);
         this.appendString(`    }, { noAck: true });`);
       }
