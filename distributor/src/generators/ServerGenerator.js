@@ -279,9 +279,18 @@ export default class ServerGenerator extends FunctionGenerator {
         );
         if(isExchange){
           //channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(responsefuncao1)));
-          this.appendString(
-            `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
-          );
+          if(server.rabbitmq.callback_queue === 'anonymous'){
+            this.appendString(
+              `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
+            );
+          } else {
+            this.appendString(
+              `          channel.publish(exchange, '${server.rabbitmq.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
+            );
+          }
+          // this.appendString(
+          //   `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
+          // );
           this.appendString(
             `          correlationId: msg.properties.correlationId`
           );
@@ -289,9 +298,18 @@ export default class ServerGenerator extends FunctionGenerator {
           this.appendString(`        }`);
           this.appendString(`    }, { noAck: true });`);
         } else {
-          this.appendString(
-            `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
-          );
+          if(server.rabbitmq.callback_queue !== 'anonymous'){
+            this.appendString(
+              `          channel.sendToQueue('${server.rabbitmq.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
+            );
+          } else {
+            this.appendString(
+              `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
+            );
+          }
+          // this.appendString(
+          //   `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
+          // );
           this.appendString(
             `          correlationId: msg.properties.correlationId`
           );
