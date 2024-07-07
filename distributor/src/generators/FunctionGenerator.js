@@ -140,6 +140,7 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         .map((param) => param.name)
         .join(", ");
       const connectionUrl = server.rabbitmq.connectionUrl || "amqp://localhost";
+      const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
 
       this.appendString(
         `export async function ${functionName}(${paramNames}) {`
@@ -160,9 +161,9 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`      const q = await channel.assertQueue('', {`);
       this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
-      if(server.rabbitmq.exchange_type === 'direct' || server.rabbitmq.exchange_type === 'fanout' || server.rabbitmq.exchange_type === 'topic'){
+      if(isExchange){
         this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
-        this.appendString(`      await channel.assertExchange(exchange, '${server.rabbitmq.exchange_type}', {`);
+        this.appendString(`      await channel.assertExchange(exchange, '${server.rabbitmq.type}', {`);
         this.appendString(`        durable: false,`);
         this.appendString(`      });`);
         //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
@@ -202,8 +203,11 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       // this.appendString(
       //   `            if (message.funcName === "${functionName}") {`
       // );
+      // this.appendString(
+      //   `            if (message.funcName === "${functionName}" && msg.properties.correlationId === correlationId) {`
+      // );
       this.appendString(
-        `            if (message.funcName === "${functionName}" && msg.properties.correlationId === correlationId) {`
+        `            if (msg.properties.correlationId === correlationId) {`
       );
       this.appendString(`              const result = message.result;`);
       this.appendString(
@@ -224,21 +228,32 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       // this.appendString(
       //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)));`
       // );
-      if(server.rabbitmq.exchange_type === 'direct' || server.rabbitmq.exchange_type === 'fanout' || server.rabbitmq.exchange_type === 'topic'){
+      if(isExchange){
+        let routingKey = `server_${functionName}`;
+        if(server.rabbitmq.type === 'topic'){
+          routingKey = `server.${functionName}`;
+        }
+        if(server.rabbitmq.type === 'fanout'){
+          routingKey = ``;
+        }
         this.appendString(
-          `      channel.publish(exchange, 'server_${functionName}', Buffer.from(JSON.stringify(callObj)), {`);
+          `      channel.publish(exchange, '${routingKey}', Buffer.from(JSON.stringify(callObj))`);
       } else {
         this.appendString(
           `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
         );
         this.appendString(
-          `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {`);
+          `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj))`);
       }
       // this.appendString(
       //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {`);
-      this.appendString(`           correlationId: correlationId,`);
-      this.appendString(`           replyTo: q.queue`);
-      this.appendString(`       });`);
+      // if(server.rabbitmq.callback_queue === 'anonymous'){
+      //   this.appendString(`           , {correlationId: correlationId,`);
+      //   this.appendString(`           replyTo: q.queue}`);
+      // }
+      this.appendString(`           , {correlationId: correlationId,`);
+      this.appendString(`           replyTo: q.queue}`);
+      this.appendString(`       );`);
       this.appendString(`    } catch (error) {`);
       this.appendString(
         `      console.error("Error processing call to function ${functionName}:", error);`
