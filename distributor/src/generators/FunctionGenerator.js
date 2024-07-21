@@ -140,6 +140,8 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         .map((param) => param.name)
         .join(", ");
       const connectionUrl = server.rabbitmq.connectionUrl || "amqp://localhost";
+      const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
+      let responseQueue = 'q.queue';
 
       this.appendString(
         `export async function ${functionName}(${paramNames}) {`
@@ -157,16 +159,43 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(
         `      const channel = await connection.createChannel();`
       );
-      this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
-      this.appendString(
-        `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
-      );
-      // this.appendString(`      await channel.assertQueue(queueName, {`);
-      // this.appendString(`        durable: false,`);
       this.appendString(`      const q = await channel.assertQueue('', {`);
       this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
+      if(isExchange){
+        this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
+        this.appendString(`      await channel.assertExchange(exchange, '${server.rabbitmq.type}', {`);
+        this.appendString(`        durable: false,`);
+        this.appendString(`      });`);
+        //if(functionInfo.server.callback_queue && functionInfo.server.callback_queue !== 'anonymous'){
+        if(server.rabbitmq.callback_queue && server.rabbitmq.callback_queue !== 'anonymous'){
+          // this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions_${functionName}');`);
+          this.appendString(`      await channel.bindQueue(q.queue, exchange, '${server.rabbitmq.callback_queue}');`);
+        }
+        //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
+      } else {
+        this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
+        this.appendString(
+          `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
+        );
+        if(server.rabbitmq.callback_queue && server.rabbitmq.callback_queue !== 'anonymous'){
+          this.appendString(`      let callbackQueue = "${server.rabbitmq.callback_queue}";`);
+          this.appendString(
+            `  await channel.assertQueue(callbackQueue, { durable: false });`
+          );
+          responseQueue = 'callbackQueue';
+        }
+      }
+      //this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
+      // this.appendString(
+      //   `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
+      // );
+      // this.appendString(`      await channel.assertQueue(queueName, {`);
+      // this.appendString(`        durable: false,`);
       // const correlationId = generateUuid();
+      // if(server.rabbitmq.callback_queue === 'anonymous'){
+      //   this.appendString(`      const correlationId = generateUuid();`);
+      // }
       this.appendString(`      const correlationId = generateUuid();`);
       this.appendString(`      const callObj = {`);
       this.appendString(`        funcName: "${functionName}",`);
@@ -178,7 +207,7 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`        },`);
       this.appendString(`      };`);
       this.appendString(`      channel.consume(`);
-      this.appendString(`        q.queue,`);
+      this.appendString(`        ${responseQueue},`);
       this.appendString(`        (msg) => {`);
       this.appendString(`          if (msg) {`);
       this.appendString(
@@ -190,8 +219,11 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       // this.appendString(
       //   `            if (message.funcName === "${functionName}") {`
       // );
+      // this.appendString(
+      //   `            if (message.funcName === "${functionName}" && msg.properties.correlationId === correlationId) {`
+      // );
       this.appendString(
-        `            if (message.funcName === "${functionName}" && msg.properties.correlationId === correlationId) {`
+        `            if (msg.properties.correlationId === correlationId) {`
       );
       this.appendString(`              const result = message.result;`);
       this.appendString(
@@ -206,15 +238,38 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`          noAck: true,`);
       this.appendString(`        }`);
       this.appendString(`      );`);
-      this.appendString(
-        `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
-      );
+      // this.appendString(
+      //   `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
+      // );
       // this.appendString(
       //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)));`
       // );
-      this.appendString(
-        `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {correlationId: correlationId,replyTo: q.queue});`
-      );
+      if(isExchange){
+        let routingKey = `server_${functionName}`;
+        if(server.rabbitmq.type === 'topic'){
+          routingKey = `server.${functionName}`;
+        }
+        if(server.rabbitmq.type === 'fanout'){
+          routingKey = ``;
+        }
+        this.appendString(
+          `      channel.publish(exchange, '${routingKey}', Buffer.from(JSON.stringify(callObj))`);
+      } else {
+        this.appendString(
+          `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
+        );
+        this.appendString(
+          `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj))`);
+      }
+      // this.appendString(
+      //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {`);
+      this.appendString(`           , {correlationId: correlationId`);
+      if(!server.rabbitmq.callback_queue || server.rabbitmq.callback_queue === 'anonymous'){
+        this.appendString(`           ,replyTo: q.queue`);
+      }
+      // this.appendString(`           , {correlationId: correlationId,`);
+      // this.appendString(`           replyTo: q.queue}`);
+      this.appendString(`       });`);
       this.appendString(`    } catch (error) {`);
       this.appendString(
         `      console.error("Error processing call to function ${functionName}:", error);`
