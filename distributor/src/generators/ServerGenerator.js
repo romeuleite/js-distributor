@@ -279,13 +279,13 @@ export default class ServerGenerator extends FunctionGenerator {
         );
         if(isExchange){
           //channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(responsefuncao1)));
-          if(!server.rabbitmq.callback_queue || server.rabbitmq.callback_queue === 'anonymous'){
+          if(!functionInfo.callback_queue || functionInfo.callback_queue === 'anonymous'){
             this.appendString(
               `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
             );
           } else {
             this.appendString(
-              `          channel.publish(exchange, '${server.rabbitmq.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
+              `          channel.publish(exchange, '${functionInfo.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
             );
           }
           // this.appendString(
@@ -298,9 +298,9 @@ export default class ServerGenerator extends FunctionGenerator {
           this.appendString(`        }`);
           this.appendString(`    }, { noAck: true });`);
         } else {
-          if(server.rabbitmq.callback_queue && server.rabbitmq.callback_queue !== 'anonymous'){
+          if(functionInfo.callback_queue && functionInfo.callback_queue !== 'anonymous'){
             this.appendString(
-              `          channel.sendToQueue('${server.rabbitmq.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
+              `          channel.sendToQueue('${functionInfo.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
             );
           } else {
             this.appendString(
