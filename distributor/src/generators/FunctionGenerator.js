@@ -167,10 +167,10 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         this.appendString(`      await channel.assertExchange(exchange, '${server.rabbitmq.type}', {`);
         this.appendString(`        durable: false,`);
         this.appendString(`      });`);
-        //if(functionInfo.server.callback_queue && functionInfo.server.callback_queue !== 'anonymous'){
-        if(server.rabbitmq.callback_queue && server.rabbitmq.callback_queue !== 'anonymous'){
+        if(functionInfo.callback_queue && functionInfo.callback_queue !== 'anonymous'){
+        //if(server.rabbitmq.callback_queue && server.rabbitmq.callback_queue !== 'anonymous'){
           // this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions_${functionName}');`);
-          this.appendString(`      await channel.bindQueue(q.queue, exchange, '${server.rabbitmq.callback_queue}');`);
+          this.appendString(`      await channel.bindQueue(q.queue, exchange, '${functionInfo.callback_queue}');`);
         }
         //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
       } else {
@@ -178,8 +178,8 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         this.appendString(
           `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
         );
-        if(server.rabbitmq.callback_queue && server.rabbitmq.callback_queue !== 'anonymous'){
-          this.appendString(`      let callbackQueue = "${server.rabbitmq.callback_queue}";`);
+        if(functionInfo.callback_queue && functionInfo.callback_queue !== 'anonymous'){
+          this.appendString(`      let callbackQueue = "${functionInfo.callback_queue}";`);
           this.appendString(
             `  await channel.assertQueue(callbackQueue, { durable: false });`
           );
@@ -264,7 +264,7 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       // this.appendString(
       //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)), {`);
       this.appendString(`           , {correlationId: correlationId`);
-      if(!server.rabbitmq.callback_queue || server.rabbitmq.callback_queue === 'anonymous'){
+      if(!functionInfo.callback_queue || functionInfo.callback_queue === 'anonymous'){
         this.appendString(`           ,replyTo: q.queue`);
       }
       // this.appendString(`           , {correlationId: correlationId,`);
