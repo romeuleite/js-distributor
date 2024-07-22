@@ -140,7 +140,14 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         .map((param) => param.name)
         .join(", ");
       const connectionUrl = server.rabbitmq.connectionUrl || "amqp://localhost";
-      const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
+      const isExchange = !!functionInfo.exchange;
+
+      let exchange_type = 'direct';
+      const routingKey = `${functionInfo.routing_key}`;
+      if(routingKey.includes('.')){
+        exchange_type = 'topic'
+      }
+      //const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
       let responseQueue = 'q.queue';
 
       this.appendString(
@@ -163,8 +170,8 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
       if(isExchange){
-        this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
-        this.appendString(`      await channel.assertExchange(exchange, '${server.rabbitmq.type}', {`);
+        this.appendString(`      let exchange = '${functionInfo.exchange}';`);
+        this.appendString(`      await channel.assertExchange(exchange, '${exchange_type}', {`);
         this.appendString(`        durable: false,`);
         this.appendString(`      });`);
         if(functionInfo.callback_queue && functionInfo.callback_queue !== 'anonymous'){
@@ -245,15 +252,16 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       //   `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj)));`
       // );
       if(isExchange){
-        let routingKey = `server_${functionName}`;
-        if(server.rabbitmq.type === 'topic'){
-          routingKey = `server.${functionName}`;
-        }
-        if(server.rabbitmq.type === 'fanout'){
-          routingKey = ``;
-        }
+        //let routingKey = `${functionInfo.routing_key}`;
+        //let routingKey = `server_${functionName}`;
+        // if(server.rabbitmq.type === 'topic'){
+        //   routingKey = `server.${functionName}`;
+        // }
+        // if(server.rabbitmq.type === 'fanout'){
+        //   routingKey = ``;
+        // }
         this.appendString(
-          `      channel.publish(exchange, '${routingKey}', Buffer.from(JSON.stringify(callObj))`);
+          `      channel.publish(exchange, '${functionInfo.routing_key}', Buffer.from(JSON.stringify(callObj))`);
       } else {
         this.appendString(
           `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
