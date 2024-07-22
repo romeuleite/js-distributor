@@ -179,7 +179,13 @@ export default class ServerGenerator extends FunctionGenerator {
       !this.checkWaitForCallFunctionsInitialized(`waitForCall${server.id}`)
     ) {
       const waitForCallFunction = `waitForCall${server.id}`;
-      const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
+      // const isExchange = !!functionInfo.exchange;
+
+      // let exchange_type = 'direct';
+      // const routingKey = `${functionInfo.routing_key}`;
+      // if (routingKey.includes('.')) {
+      //   exchange_type = 'topic'
+      // }
 
       this.appendString(`async function ${waitForCallFunction}() {`);
       this.appendString(
@@ -188,25 +194,25 @@ export default class ServerGenerator extends FunctionGenerator {
       );
       this.appendString(`  console.log("Waiting for calls");`);
       this.appendString(`  const channel = await connection.createChannel();`);
-      if(isExchange){
-        this.appendString(`      let exchange = '${server.rabbitmq.exchange}';`);
-        this.appendString(
-          `  await channel.assertExchange(exchange, '${server.rabbitmq.type}', { durable: false });`
-        );
-      } else {
-        this.appendString(`  let queueName = "${server.rabbitmq.queue}";`);
-        this.appendString(
-          `  await channel.assertQueue(queueName, { durable: false });`
-        );
-        this.appendString(`  channel.consume(`);
-        this.appendString(`    queueName,`);
-        this.appendString(`    async (msg) => {`);
-        this.appendString(`      if (msg) {`);
-        this.appendString(`        console.log("Receiving call");`);
-        this.appendString(
-          `        const message = JSON.parse(msg.content.toString());`
-        );
-      }
+      // if (!isExchange) {
+      //   // this.appendString(`      let exchange = '${functionInfo.exchange}';`);
+      //   // this.appendString(
+      //   //   `  await channel.assertExchange(exchange, '${exchange_type}', { durable: false });`
+      //   // );
+      //   //} else {
+      //   this.appendString(`  let queueName = "${server.rabbitmq.queue}";`);
+      //   this.appendString(
+      //     `  await channel.assertQueue(queueName, { durable: false });`
+      //   );
+      //   this.appendString(`  channel.consume(`);
+      //   this.appendString(`    queueName,`);
+      //   this.appendString(`    async (msg) => {`);
+      //   this.appendString(`      if (msg) {`);
+      //   this.appendString(`        console.log("Receiving call");`);
+      //   this.appendString(
+      //     `        const message = JSON.parse(msg.content.toString());`
+      //   );
+      // }
       // this.appendString(`  let queueName = "${server.rabbitmq.queue}";`);
       // this.appendString(
       //   `  await channel.assertQueue(queueName, { durable: false });`
@@ -229,19 +235,32 @@ export default class ServerGenerator extends FunctionGenerator {
           .map((param) => param.name)
           .join(", ");
 
-        if(isExchange){
-          let routingKey = `server_${func.name}`;
-          if(server.rabbitmq.type === 'topic'){
-            routingKey = `server.${func.name}`;
-          }
-          if(server.rabbitmq.type === 'fanout'){
-            routingKey = ``;
-          }
+        let isExchange = !!func.exchange;
+
+        let exchange_type = 'direct';
+        const routingKey = `${func.routing_key}`;
+        if (routingKey.includes('.')) {
+          exchange_type = 'topic'
+        }
+
+        if (isExchange) {
+          // let routingKey = `server_${func.name}`;
+          // if(server.rabbitmq.type === 'topic'){
+          //   routingKey = `server.${func.name}`;
+          // }
+          // if(server.rabbitmq.type === 'fanout'){
+          //   routingKey = ``;
+          // }
+          this.appendString(`      let ${func.name}_exchange = '${func.exchange}';`);
+          this.appendString(
+            `  await channel.assertExchange(${func.name}_exchange, '${exchange_type}', { durable: false });`
+          );
+
           this.appendString(
             `  const q${func.name} = await channel.assertQueue('', { exclusive: true });`
           );
           this.appendString(
-            `  await channel.bindQueue(q${func.name}.queue, exchange, '${routingKey}');`
+            `  await channel.bindQueue(q${func.name}.queue, ${func.name}_exchange, '${func.routing_key}');`
           );
           this.appendString(`  channel.consume(`);
           this.appendString(`    q${func.name}.queue,`);
@@ -252,6 +271,18 @@ export default class ServerGenerator extends FunctionGenerator {
             `        const message = JSON.parse(msg.content.toString());`
           );
         } else {
+          this.appendString(`  let ${func.name}_queueName = "${server.rabbitmq.queue}";`);
+          this.appendString(
+            `  await channel.assertQueue(${func.name}_queueName, { durable: false });`
+          );
+          this.appendString(`  channel.consume(`);
+          this.appendString(`    ${func.name}_queueName,`);
+          this.appendString(`    async (msg) => {`);
+          this.appendString(`      if (msg) {`);
+          this.appendString(`        console.log("Receiving call");`);
+          this.appendString(
+            `        const message = JSON.parse(msg.content.toString());`
+          );
           this.appendString(
             `        if (message.funcName === "${func.name}") {`
           );
@@ -277,15 +308,15 @@ export default class ServerGenerator extends FunctionGenerator {
         this.appendString(
           `          console.log("Sending response to function ${func.name}");`
         );
-        if(isExchange){
+        if (isExchange) {
           //channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(responsefuncao1)));
-          if(!functionInfo.callback_queue || functionInfo.callback_queue === 'anonymous'){
+          if (!func.callback_queue || func.callback_queue === 'anonymous') {
             this.appendString(
               `          channel.publish('', msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {`
             );
           } else {
             this.appendString(
-              `          channel.publish(exchange, '${functionInfo.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
+              `          channel.publish(exchange, '${func.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
             );
           }
           // this.appendString(
@@ -298,9 +329,9 @@ export default class ServerGenerator extends FunctionGenerator {
           this.appendString(`        }`);
           this.appendString(`    }, { noAck: true });`);
         } else {
-          if(functionInfo.callback_queue && functionInfo.callback_queue !== 'anonymous'){
+          if (func.callback_queue && func.callback_queue !== 'anonymous') {
             this.appendString(
-              `          channel.sendToQueue('${functionInfo.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
+              `          channel.sendToQueue('${func.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
             );
           } else {
             this.appendString(
@@ -324,11 +355,17 @@ export default class ServerGenerator extends FunctionGenerator {
         //   `          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response${func.name})), {correlationId: msg.properties.correlationId});`
         // );
         // this.appendString(`        }`);
+        if (!func.exchange) {
+          //if(server.rabbitmq.type !== 'direct' && server.rabbitmq.type !== 'fanout' && server.rabbitmq.type !== 'topic'){
+          this.appendString(`        }`);
+          this.appendString(`    }, { noAck: true });`);
+        }
       }
-      if(server.rabbitmq.type !== 'direct' && server.rabbitmq.type !== 'fanout' && server.rabbitmq.type !== 'topic'){
-        this.appendString(`        }`);
-        this.appendString(`    }, { noAck: true });`);
-      }
+      // if (!functionInfo.exchange) {
+      //   //if(server.rabbitmq.type !== 'direct' && server.rabbitmq.type !== 'fanout' && server.rabbitmq.type !== 'topic'){
+      //   this.appendString(`        }`);
+      //   this.appendString(`    }, { noAck: true });`);
+      // }
       this.appendString(`}`);
       this.appendNewLine();
       this.appendString(`waitForCall${server.id}();`);
