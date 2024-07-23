@@ -316,7 +316,7 @@ export default class ServerGenerator extends FunctionGenerator {
             );
           } else {
             this.appendString(
-              `          channel.publish(exchange, '${func.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
+              `          channel.publish(${func.name}_exchange, '${func.callback_queue}', Buffer.from(JSON.stringify(response${func.name})), {`
             );
           }
           // this.appendString(
