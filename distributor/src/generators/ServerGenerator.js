@@ -237,6 +237,12 @@ export default class ServerGenerator extends FunctionGenerator {
 
         let isExchange = !!func.exchange;
 
+        let rpcQueue = `${func.name}_queue`;
+
+        if (func.queue) {
+          rpcQueue = func.queue;
+        }
+
         let exchange_type = 'direct';
         const routingKey = `${func.routing_key}`;
         if (routingKey.includes('.')) {
@@ -271,7 +277,7 @@ export default class ServerGenerator extends FunctionGenerator {
             `        const message = JSON.parse(msg.content.toString());`
           );
         } else {
-          this.appendString(`  let ${func.name}_queueName = "${server.rabbitmq.queue}";`);
+          this.appendString(`  let ${func.name}_queueName = "${rpcQueue}";`);
           this.appendString(
             `  await channel.assertQueue(${func.name}_queueName, { durable: false });`
           );
