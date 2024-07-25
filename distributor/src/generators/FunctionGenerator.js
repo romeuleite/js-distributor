@@ -141,6 +141,11 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         .join(", ");
       const connectionUrl = server.rabbitmq.connectionUrl || "amqp://localhost";
       const isExchange = !!functionInfo.exchange;
+      let rpcQueue = `${functionInfo.name}_queue`;
+
+      if(functionInfo.queue){
+        rpcQueue = functionInfo.queue;
+      }
 
       let exchange_type = 'direct';
       const routingKey = `${functionInfo.routing_key}`;
@@ -181,9 +186,9 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         }
         //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
       } else {
-        this.appendString(`      let queueName = "${server.rabbitmq.queue}";`);
+        this.appendString(`      let queueName = "${rpcQueue}";`);
         this.appendString(
-          `      console.log("Declaring queue: ${server.rabbitmq.queue}");`
+          `      console.log("Declaring queue: ${rpcQueue}");`
         );
         if(functionInfo.callback_queue && functionInfo.callback_queue !== 'anonymous'){
           this.appendString(`      let callbackQueue = "${functionInfo.callback_queue}";`);
@@ -263,8 +268,11 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         this.appendString(
           `      channel.publish(exchange, '${functionInfo.routing_key}', Buffer.from(JSON.stringify(callObj))`);
       } else {
+        // this.appendString(
+        //   `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
+        // );
         this.appendString(
-          `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
+          `      console.log("Sending message to queue: ${rpcQueue}");`
         );
         this.appendString(
           `      channel.sendToQueue(queueName, Buffer.from(JSON.stringify(callObj))`);
