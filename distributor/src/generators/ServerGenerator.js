@@ -244,9 +244,12 @@ export default class ServerGenerator extends FunctionGenerator {
         }
 
         let exchange_type = 'direct';
-        const routingKey = `${func.routing_key}`;
+        let routingKey = `${func.routing_key}`;
         if (routingKey.includes('.')) {
-          exchange_type = 'topic'
+          exchange_type = 'topic';
+        } else if (!func.routing_key){
+          exchange_type = 'fanout';
+          routingKey = ``;
         }
 
         if (isExchange) {
@@ -266,7 +269,7 @@ export default class ServerGenerator extends FunctionGenerator {
             `  const q${func.name} = await channel.assertQueue('', { exclusive: true });`
           );
           this.appendString(
-            `  await channel.bindQueue(q${func.name}.queue, ${func.name}_exchange, '${func.routing_key}');`
+            `  await channel.bindQueue(q${func.name}.queue, ${func.name}_exchange, '${routingKey}');`
           );
           this.appendString(`  channel.consume(`);
           this.appendString(`    q${func.name}.queue,`);
