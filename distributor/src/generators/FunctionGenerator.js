@@ -148,9 +148,12 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       }
 
       let exchange_type = 'direct';
-      const routingKey = `${functionInfo.routing_key}`;
+      let routingKey = `${functionInfo.routing_key}`;
       if(routingKey.includes('.')){
-        exchange_type = 'topic'
+        exchange_type = 'topic';
+      } else if (!functionInfo.routing_key){
+        exchange_type = 'fanout';
+        routingKey = ``;
       }
       //const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
       let responseQueue = 'q.queue';
@@ -175,14 +178,14 @@ export default class FunctionGenerator extends CopyPasteGenerator {
       this.appendString(`        exclusive: true,`);
       this.appendString(`      });`);
       if(isExchange){
-        this.appendString(`      let exchange = '${functionInfo.exchange}';`);
-        this.appendString(`      await channel.assertExchange(exchange, '${exchange_type}', {`);
+        this.appendString(`      let ${functionInfo.name}_exchange = '${functionInfo.exchange}';`);
+        this.appendString(`      await channel.assertExchange(${functionInfo.name}_exchange, '${exchange_type}', {`);
         this.appendString(`        durable: false,`);
         this.appendString(`      });`);
         if(functionInfo.callback_queue && functionInfo.callback_queue !== 'anonymous'){
         //if(server.rabbitmq.callback_queue && server.rabbitmq.callback_queue !== 'anonymous'){
           // this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions_${functionName}');`);
-          this.appendString(`      await channel.bindQueue(q.queue, exchange, '${functionInfo.callback_queue}');`);
+          this.appendString(`      await channel.bindQueue(q.queue, ${functionInfo.name}_exchange, '${functionInfo.callback_queue}');`);
         }
         //this.appendString(`      await channel.bindQueue(q.queue, exchange, 'functions.${server.id}.${functionName}');`);
       } else {
@@ -266,7 +269,7 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         //   routingKey = ``;
         // }
         this.appendString(
-          `      channel.publish(exchange, '${functionInfo.routing_key}', Buffer.from(JSON.stringify(callObj))`);
+          `      channel.publish(${functionInfo.name}_exchange, '${routingKey}', Buffer.from(JSON.stringify(callObj))`);
       } else {
         // this.appendString(
         //   `      console.log("Sending message to queue: ${server.rabbitmq.queue}");`
