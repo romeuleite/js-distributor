@@ -147,14 +147,18 @@ export default class FunctionGenerator extends CopyPasteGenerator {
         rpcQueue = functionInfo.queue;
       }
 
-      let exchange_type = 'direct';
-      let routingKey = `${functionInfo.routing_key}`;
-      if(routingKey.includes('.')){
-        exchange_type = 'topic';
-      } else if (!functionInfo.routing_key){
-        exchange_type = 'fanout';
-        routingKey = ``;
-      }
+      let exchange_type = functionInfo.exchange_type ? `${functionInfo.exchange_type}` : 'fanout';
+      let routingKey = functionInfo.routing_key ? `${functionInfo.routing_key}` : ``;
+
+      // let exchange_type = 'direct';
+      // let routingKey = `${functionInfo.routing_key}`;
+      // if(routingKey.includes('.')){
+      //   exchange_type = 'topic';
+      // } else if (!functionInfo.routing_key){
+      //   exchange_type = 'fanout';
+      //   routingKey = ``;
+      // }
+
       //const isExchange = (server.rabbitmq.type === 'direct' || server.rabbitmq.type === 'fanout' || server.rabbitmq.type === 'topic');
       let responseQueue = 'q.queue';
 
