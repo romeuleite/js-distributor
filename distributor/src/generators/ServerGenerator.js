@@ -243,14 +243,17 @@ export default class ServerGenerator extends FunctionGenerator {
           rpcQueue = func.queue;
         }
 
-        let exchange_type = 'direct';
-        let routingKey = `${func.routing_key}`;
-        if (routingKey.includes('.')) {
-          exchange_type = 'topic';
-        } else if (!func.routing_key){
-          exchange_type = 'fanout';
-          routingKey = ``;
-        }
+        let exchange_type = func.exchange_type ? `${func.exchange_type}` : 'fanout';
+        let routingKey = func.routing_key ? `${func.routing_key}` : ``;
+
+        // let exchange_type = 'direct';
+        // let routingKey = `${func.routing_key}`;
+        // if (routingKey.includes('.')) {
+        //   exchange_type = 'topic';
+        // } else if (!func.routing_key){
+        //   exchange_type = 'fanout';
+        //   routingKey = ``;
+        // }
 
         if (isExchange) {
           // let routingKey = `server_${func.name}`;
